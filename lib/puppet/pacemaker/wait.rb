@@ -9,9 +9,9 @@ module Pacemaker
     def retry_block(options = {})
       options = pacemaker_options.merge options
 
-      options[:retry_count].times do
+      options[:retry_count].times do |retry_number|
         begin
-          out = Timeout::timeout(options[:retry_timeout]) { yield }
+          out = Timeout::timeout(options[:retry_timeout]) { yield retry_number }
           if options[:retry_false_is_failure]
             return out if out
           else
@@ -31,9 +31,10 @@ module Pacemaker
       message = "Waiting #{max_wait_time} seconds for Pacemaker to become online"
       message += " (#{comment})" if comment
       debug message
-      retry_block do
+      retry_block do |retry_number|
         cib_reset 'wait_for_online'
-        is_online?
+        next true if is_online?
+        yield retry_number if block_given?
       end
       debug 'Pacemaker is online'
     end
@@ -45,9 +46,10 @@ module Pacemaker
       message = "Waiting #{max_wait_time} seconds for a known status of '#{primitive}'"
       message += " on node '#{node}'" if node
       debug message
-      retry_block do
+      retry_block do |retry_number|
         cib_reset 'wait_for_status'
-        primitive_status(primitive) != nil
+        next true unless primitive_status(primitive).nil?
+        yield retry_number if block_given?
       end
       message = "Primitive '#{primitive}' has status '#{primitive_status primitive}'"
       message += " on node '#{node}'" if node
@@ -62,9 +64,10 @@ module Pacemaker
       message = "Waiting #{max_wait_time} seconds for the service '#{primitive}' to start"
       message += " on node '#{node}'" if node
       debug message
-      retry_block do
+      retry_block do |retry_number|
         cib_reset 'wait_for_start'
-        primitive_is_running? primitive, node
+        next true if primitive_is_running? primitive, node
+        yield retry_number if block_given?
       end
       message = "Service '#{primitive}' have started"
       message += " on node '#{node}'" if node
@@ -79,9 +82,10 @@ module Pacemaker
       message = "Waiting #{max_wait_time} seconds for the service '#{primitive}' to start master"
       message += " on node '#{node}'" if node
       debug message
-      retry_block do
+      retry_block do |retry_number|
         cib_reset 'wait_for_master'
-        primitive_has_master_running? primitive, node
+        next true if primitive_has_master_running? primitive, node
+        yield retry_number if block_given?
       end
       message = "Service '#{primitive}' have started master"
       message += " on node '#{node}'" if node
@@ -96,10 +100,10 @@ module Pacemaker
       message = "Waiting #{max_wait_time} seconds for the service '#{primitive}' to stop"
       message += " on node '#{node}'" if node
       debug message
-      retry_block do
+      retry_block do |retry_number|
         cib_reset 'wait_for_stop'
-        result = primitive_is_running? primitive, node
-        result.is_a? FalseClass
+        next true unless primitive_is_running? primitive, node
+        yield retry_number if block_given?
       end
       message = "Service '#{primitive}' was stopped"
       message += " on node '#{node}'" if node

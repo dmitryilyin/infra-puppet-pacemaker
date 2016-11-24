@@ -192,16 +192,14 @@ Puppet::Type.type(:service).provide(:pacemaker, :parent => Puppet::Provider::Pcm
       service_location_add full_name, hostname unless service_location_exists? full_name, hostname
     end
 
-    unban_primitive name, hostname
-    start_primitive name
-    start_primitive full_name
-
     if primitive_is_multistate? name
-      debug "Choose master start for Pacemaker service '#{name}'"
-      wait_for_master name
+      service_start_mode pacemaker_options[:start_mode_multistate]
+    elsif primitive_is_clone? name
+      service_start_mode pacemaker_options[:start_mode_clone]
     else
       service_start_mode pacemaker_options[:start_mode_simple]
     end
+
     debug cluster_debug_report "#{@resource} start"
   end
 
@@ -239,7 +237,7 @@ Puppet::Type.type(:service).provide(:pacemaker, :parent => Puppet::Provider::Pcm
     begin
       stop
     rescue
-      nil
+      debug 'The service have failed to stop! Trying to start it anyway...'
     ensure
       start
     end
@@ -249,15 +247,30 @@ Puppet::Type.type(:service).provide(:pacemaker, :parent => Puppet::Provider::Pcm
   # the selected method.
   # @param mode [:global, :master, :local]
   def service_start_mode(mode = :global)
+    start_action = Proc.new do
+      unban_primitive name, hostname
+      start_primitive name
+      start_primitive full_name
+    end
+
     if mode == :master
       debug "Choose master start for Pacemaker service '#{name}'"
-      wait_for_master name
+      start_action.call
+      wait_for_master(name) do
+        start_action.call
+      end
     elsif mode == :local
       debug "Choose local start for Pacemaker service '#{name}' on node '#{hostname}'"
-      wait_for_start name, hostname
+      start_action.call
+      wait_for_start(name, hostname) do
+        start_action.call
+      end
     elsif :global
       debug "Choose global start for Pacemaker service '#{name}'"
-      wait_for_start name
+      start_action.call
+      wait_for_start(name) do
+        start_action.call
+      end
     else
       fail "Unknown service start mode '#{mode}'"
     end
@@ -267,14 +280,24 @@ Puppet::Type.type(:service).provide(:pacemaker, :parent => Puppet::Provider::Pcm
   # the selected method.
   # @param mode [:global, :master, :local]
   def service_stop_mode(mode = :global)
-    if mode == :local
+    if mode == :master
+      debug "Choose master stop for Pacemaker service '#{name}'"
+      ban_primitive name, hostname
+      wait_for_stop(name, hostname) do
+        ban_primitive name, hostname
+      end
+    elsif mode == :local
       debug "Choose local stop for Pacemaker service '#{name}' on node '#{hostname}'"
       ban_primitive name, hostname
-      wait_for_stop name, hostname
+      wait_for_stop(name, hostname) do
+        ban_primitive name, hostname
+      end
     elsif mode == :global
       debug "Choose global stop for Pacemaker service '#{name}'"
       stop_primitive name
-      wait_for_stop name
+      wait_for_stop(name) do
+        stop_primitive name
+      end
     else
       fail "Unknown service stop mode '#{mode}'"
     end
